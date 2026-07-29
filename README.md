@@ -1,4 +1,4 @@
-# Master Stripper
+# Master Stripper for Skyrim
 
 A small Windows utility for removing one master dependency from ordinary Skyrim
 compatibility patches.
