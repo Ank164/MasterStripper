@@ -1,0 +1,366 @@
+using Mutagen.Bethesda;
+using Mutagen.Bethesda.Environments;
+using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Plugins.Binary.Parameters;
+using Mutagen.Bethesda.Plugins.Exceptions;
+using Mutagen.Bethesda.Plugins.Records;
+using Mutagen.Bethesda.Skyrim;
+
+namespace MasterStripper;
+
+internal sealed class MainForm : Form
+{
+    private readonly ListBox _files = new() { Dock = DockStyle.Fill };
+    private readonly ComboBox _masters = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly TextBox _masterSearch = new() { Dock = DockStyle.Fill, PlaceholderText = "Type any part of the master filename…" };
+    private readonly List<string> _availableMasters = [];
+    private readonly Button _strip = new() { Text = "Strip selected master", Dock = DockStyle.Fill, Enabled = false };
+    private readonly Button _add = new() { Text = "Add patches…", Dock = DockStyle.Fill };
+    private readonly Button _remove = new() { Text = "Remove selected", Dock = DockStyle.Fill };
+    private readonly CheckBox _copies = new() { Text = "Write cleaned copies instead of replacing originals", Checked = false, AutoSize = true };
+    private readonly TextBox _log = new()
+    {
+        Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical
+    };
+
+    public MainForm(IEnumerable<string> initialFiles)
+    {
+        Text = "Master Stripper 2.2.0";
+        Width = 780;
+        Height = 620;
+        MinimumSize = new System.Drawing.Size(650, 500);
+        StartPosition = FormStartPosition.CenterScreen;
+        AllowDrop = true;
+
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(12),
+            ColumnCount = 2,
+            RowCount = 8
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 44));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 56));
+
+        var intro = new Label
+        {
+            Text = "Drop Skyrim patch plugins here, then choose the master to remove.",
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Padding = new Padding(0, 0, 0, 8)
+        };
+        layout.Controls.Add(intro, 0, 0);
+        layout.SetColumnSpan(intro, 2);
+        layout.Controls.Add(_files, 0, 1);
+        layout.SetColumnSpan(_files, 2);
+        layout.Controls.Add(_add, 0, 2);
+        layout.Controls.Add(_remove, 1, 2);
+        layout.Controls.Add(new Label { Text = "Master to strip — search by partial filename:", AutoSize = true, Padding = new Padding(0, 8, 0, 2) }, 0, 3);
+        layout.SetColumnSpan(layout.GetControlFromPosition(0, 3)!, 2);
+        layout.Controls.Add(_masterSearch, 0, 4);
+        layout.SetColumnSpan(_masterSearch, 2);
+        layout.Controls.Add(_masters, 0, 5);
+        layout.SetColumnSpan(_masters, 2);
+        layout.Controls.Add(_copies, 0, 6);
+        layout.Controls.Add(_strip, 1, 6);
+        layout.Controls.Add(_log, 0, 7);
+        layout.SetColumnSpan(_log, 2);
+        Controls.Add(layout);
+
+        DragEnter += (_, e) =>
+        {
+            if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true) e.Effect = DragDropEffects.Copy;
+        };
+        DragDrop += (_, e) => AddFiles((string[]?)e.Data?.GetData(DataFormats.FileDrop) ?? []);
+        _add.Click += (_, _) => BrowseFiles();
+        _remove.Click += (_, _) =>
+        {
+            foreach (var item in _files.SelectedItems.Cast<string>().ToArray()) _files.Items.Remove(item);
+            RefreshMasters();
+        };
+        _masters.SelectedIndexChanged += (_, _) => _strip.Enabled = _masters.SelectedItem is not null && _files.Items.Count > 0;
+        _masterSearch.TextChanged += (_, _) => ApplyMasterFilter();
+        _strip.Click += async (_, _) => await StripAsync();
+
+        AddFiles(initialFiles);
+        Log("Ready. Originals are backed up before replacement.");
+    }
+
+    private void BrowseFiles()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Filter = "Skyrim plugins (*.esp;*.esm;*.esl)|*.esp;*.esm;*.esl",
+            Multiselect = true,
+            Title = "Choose patch plugins"
+        };
+        if (dialog.ShowDialog(this) == DialogResult.OK) AddFiles(dialog.FileNames);
+    }
+
+    private void AddFiles(IEnumerable<string> paths)
+    {
+        var existing = _files.Items.Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths.Select(Path.GetFullPath))
+        {
+            if (!File.Exists(path) || !IsPlugin(path) || !existing.Add(path)) continue;
+            _files.Items.Add(path);
+        }
+        RefreshMasters();
+    }
+
+    private void RefreshMasters()
+    {
+        var common = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var first = true;
+
+        foreach (var path in _files.Items.Cast<string>())
+        {
+            try
+            {
+                using var mod = OpenReadOnly(path);
+                var names = mod.MasterReferences.Select(x => x.Master.FileName.String).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (first) { common = names; first = false; }
+                else common.IntersectWith(names);
+            }
+            catch (Exception ex)
+            {
+                Log($"Could not inspect {Path.GetFileName(path)}: {ShortError(ex)}");
+            }
+        }
+
+        _availableMasters.Clear();
+        _availableMasters.AddRange(common.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+        ApplyMasterFilter();
+    }
+
+    private void ApplyMasterFilter()
+    {
+        var previous = _masters.SelectedItem as string;
+        var query = _masterSearch.Text.Trim();
+        _masters.BeginUpdate();
+        _masters.Items.Clear();
+        foreach (var name in _availableMasters)
+        {
+            if (query.Length == 0 || name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                _masters.Items.Add(name);
+        }
+        _masters.EndUpdate();
+
+        if (previous is not null && _masters.Items.Contains(previous)) _masters.SelectedItem = previous;
+        else if (_masters.Items.Count > 0) _masters.SelectedIndex = 0;
+        _strip.Enabled = _masters.SelectedItem is not null && _files.Items.Count > 0;
+    }
+
+    private async Task StripAsync()
+    {
+        if (_masters.SelectedItem is not string masterName) return;
+        var paths = _files.Items.Cast<string>().ToArray();
+        var target = ModKey.FromFileName(masterName);
+        var copyMode = _copies.Checked;
+        var answer = MessageBox.Show(
+            this,
+            $"Remove every complete record defined by or referencing {masterName} from {paths.Length} patch(es)?\n\n" +
+            (copyMode ? "Cleaned copies will be created beside the originals." : "Originals will be replaced after .backup copies are created."),
+            "Confirm master strip",
+            MessageBoxButtons.OKCancel,
+            MessageBoxIcon.Warning);
+        if (answer != DialogResult.OK) return;
+
+        SetBusy(true);
+        try
+        {
+            foreach (var path in paths)
+            {
+                try
+                {
+                    var result = await Task.Run(() => StripOne(path, target, copyMode));
+                    Log(result);
+                }
+                catch (Exception ex)
+                {
+                    Log($"FAILED {Path.GetFileName(path)}: {ShortError(ex)}");
+                }
+            }
+            MessageBox.Show(this, "Finished. Check the log for results.", "Master Stripper",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private static string StripOne(string path, ModKey target, bool copyMode)
+    {
+        var directory = Path.GetDirectoryName(path)!;
+        var stem = Path.GetFileNameWithoutExtension(path);
+        var extension = Path.GetExtension(path);
+        var output = copyMode
+            ? UniquePath(Path.Combine(directory, $"{stem}.stripped{extension}"))
+            : Path.Combine(directory, $".{Path.GetFileName(path)}.masterstripper.tmp");
+        var stagingDirectory = Path.Combine(Path.GetTempPath(), "MasterStripper", Guid.NewGuid().ToString("N"));
+        var workingDirectory = Path.Combine(stagingDirectory, "input");
+        var writeDirectory = Path.Combine(stagingDirectory, "output");
+        var workingPlugin = Path.Combine(workingDirectory, Path.GetFileName(path));
+        var stagedPlugin = Path.Combine(writeDirectory, Path.GetFileName(path));
+        Directory.CreateDirectory(stagingDirectory);
+        var rawRemoved = 0;
+        var structuredRemoved = 0;
+        try
+        {
+            Directory.CreateDirectory(workingDirectory);
+            Directory.CreateDirectory(writeDirectory);
+            File.Copy(path, workingPlugin);
+
+            ISkyrimMod mod;
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    mod = OpenMutable(workingPlugin);
+                    break;
+                }
+                catch (Exception ex) when (FindMissing(ex) is { FormKey: not null } missing && attempt < 64)
+                {
+                    var removed = RawPluginEditor.RemoveRecordOrContainers(
+                        workingPlugin, missing.FormKey!.Value, DataFolder());
+                    if (removed == 0)
+                        throw new InvalidOperationException(
+                            $"Raw fallback could not locate {missing.FormKey.Value} in any record.", ex);
+                    rawRemoved += removed;
+                }
+            }
+
+            var doomed = mod.EnumerateMajorRecords()
+                .Where(record =>
+                    record.FormKey.ModKey == target ||
+                    record.EnumerateFormLinks().Any(link => link.FormKey.ModKey == target))
+                .Select(record => (record.FormKey, record.Type))
+                .Distinct()
+                .ToArray();
+            structuredRemoved = doomed.Length;
+
+            foreach (var (formKey, type) in doomed.Reverse())
+                mod.Remove(formKey, type, throwIfUnknown: false);
+
+            var remaining = mod.EnumerateMajorRecords()
+                .Any(record => record.FormKey.ModKey == target ||
+                               record.EnumerateFormLinks().Any(link => link.FormKey.ModKey == target));
+            if (remaining) throw new InvalidOperationException("A reference to the selected master remained after removal.");
+
+            for (var i = mod.MasterReferences.Count - 1; i >= 0; i--)
+                if (mod.MasterReferences[i].Master == target) mod.MasterReferences.RemoveAt(i);
+
+            mod.BeginWrite
+                .ToPath(stagedPlugin)
+                .WithLoadOrderFromHeaderMasters()
+                .WithDataFolder(DataFolder())
+                .Write();
+            File.Move(stagedPlugin, output);
+        }
+        finally
+        {
+            if (Directory.Exists(stagingDirectory)) Directory.Delete(stagingDirectory, recursive: true);
+        }
+
+        if (!copyMode)
+        {
+            var backup = UniquePath(path + ".backup");
+            File.Move(path, backup);
+            try { File.Move(output, path); }
+            catch
+            {
+                File.Move(backup, path);
+                throw;
+            }
+        }
+
+        return $"OK {Path.GetFileName(path)} — removed {rawRemoved + structuredRemoved} record(s); wrote {Path.GetFileName(copyMode ? output : path)}";
+    }
+
+    private static MissingRecordException? FindMissing(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            if (current is MissingRecordException missing) return missing;
+        return null;
+    }
+
+    private static ISkyrimModDisposableGetter OpenReadOnly(string path)
+    {
+        using var env = GameEnvironment.Typical.Skyrim(SkyrimRelease.SkyrimSE);
+        var masters = env.LoadOrder.ListedOrder.Select(x => x.Mod).OfType<IModMasterStyledGetter>();
+        return SkyrimMod.Create(SkyrimRelease.SkyrimSE)
+            .FromPath(path)
+            .WithLoadOrder(masters)
+            .WithDataFolder(DataFolder())
+            .Construct();
+    }
+
+    private static ISkyrimMod OpenMutable(string path)
+    {
+        using var header = SkyrimMod.Create(SkyrimRelease.SkyrimSE)
+            .FromPath(path)
+            .WithLoadOrder(Array.Empty<ModKey>())
+            .WithDataFolder(DataFolder())
+            .Construct();
+        var masters = header.MasterReferences.Select(x => x.Master).ToArray();
+        return SkyrimMod.Create(SkyrimRelease.SkyrimSE)
+            .FromPath(path)
+            .WithLoadOrder(masters)
+            .WithDataFolder(DataFolder())
+            .Mutable()
+            .Construct();
+    }
+
+    private static string DataFolder()
+    {
+        using var env = GameEnvironment.Typical.Skyrim(SkyrimRelease.SkyrimSE);
+        return env.DataFolderPath;
+    }
+
+    private static bool IsPlugin(string path) =>
+        new[] { ".esp", ".esm", ".esl" }.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    private static string UniquePath(string desired)
+    {
+        if (!File.Exists(desired)) return desired;
+        var directory = Path.GetDirectoryName(desired)!;
+        var stem = Path.GetFileNameWithoutExtension(desired);
+        var extension = Path.GetExtension(desired);
+        for (var i = 2; ; i++)
+        {
+            var candidate = Path.Combine(directory, $"{stem}-{i}{extension}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+    }
+
+    private void SetBusy(bool busy)
+    {
+        UseWaitCursor = busy;
+        _strip.Enabled = !busy && _masters.SelectedItem is not null;
+        _add.Enabled = _remove.Enabled = _masters.Enabled = _masterSearch.Enabled = _copies.Enabled = !busy;
+    }
+
+    private void Log(string message) =>
+        _log.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+
+    private static string ShortError(Exception ex)
+    {
+        if (ex is MissingRecordException missing)
+            return $"Missing record {missing.FormKey?.ToString() ?? missing.EditorID ?? "(unknown)"}" +
+                   (missing.Type is null ? "" : $" <{missing.Type.Name}>");
+        if (ex.InnerException is MissingRecordException innerMissing)
+            return $"{ex.Message}: Missing record {innerMissing.FormKey?.ToString() ?? innerMissing.EditorID ?? "(unknown)"}" +
+                   (innerMissing.Type is null ? "" : $" <{innerMissing.Type.Name}>");
+        while (ex.InnerException is not null && string.IsNullOrWhiteSpace(ex.Message)) ex = ex.InnerException;
+        return ex.Message;
+    }
+}

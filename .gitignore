@@ -1,0 +1,9 @@
+bin/
+obj/
+Release/
+*.user
+*.suo
+*.zip
+*.exe
+*.backup
+*.stripped.esp
