@@ -151,6 +151,28 @@ public sealed class RawPluginEditorTests : IDisposable
         Assert.Single(result.FormLists);
     }
 
+    [Fact]
+    public void RebuildsOverriddenFormsAfterRemovingMasterRecords()
+    {
+        var retainedKey = ModKey.FromFileName("RetainedMaster.esm");
+        var removedKey = ModKey.FromFileName("RemovedMaster.esp");
+        var patchKey = ModKey.FromFileName("GeneratedPatch.esm");
+
+        var retained = new SkyrimMod(retainedKey, SkyrimRelease.SkyrimSE) { IsMaster = true };
+        var retainedNpc = retained.Npcs.AddNew();
+        var removed = new SkyrimMod(removedKey, SkyrimRelease.SkyrimSE);
+        var removedNpc = removed.Npcs.AddNew();
+        var patch = new SkyrimMod(patchKey, SkyrimRelease.SkyrimSE) { IsMaster = true };
+        patch.Npcs.GetOrAddAsOverride(retainedNpc);
+        patch.Npcs.GetOrAddAsOverride(removedNpc);
+        patch.ModHeader.SetOverriddenForms(new[] { retainedNpc.FormKey, removedNpc.FormKey });
+
+        patch.Npcs.Remove(removedNpc.FormKey);
+        MainForm.RebuildOverriddenForms(patch);
+
+        Assert.Equal(new[] { retainedNpc.FormKey }, patch.ModHeader.OverriddenForms!.Select(x => x.FormKey));
+    }
+
     public void Dispose()
     {
         try

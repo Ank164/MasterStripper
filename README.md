@@ -19,6 +19,10 @@ record tree, so stale records whose source no longer exists do not block the job
 It then deletes every remaining complete record that contains a FormID reference
 to the selected master, removes the master from the header, and writes a new plugin.
 
+For master-flagged `.esm` and `.esl` outputs, the utility rebuilds the ONAM
+overridden-record list from the records that remain. This prevents deleted FormIDs
+from surviving in the plugin header and blocking the write.
+
 If another stale record prevents structured loading, the utility identifies its
 FormID, removes that unresolved record (or its containing patch record) in the raw
 pass, and retries automatically.

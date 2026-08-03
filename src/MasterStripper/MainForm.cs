@@ -25,7 +25,7 @@ internal sealed class MainForm : Form
 
     public MainForm(IEnumerable<string> initialFiles)
     {
-        Text = "Master Stripper 2.2.0";
+        Text = "Master Stripper 2.3.0";
         Width = 780;
         Height = 620;
         MinimumSize = new System.Drawing.Size(650, 500);
@@ -186,7 +186,7 @@ internal sealed class MainForm : Form
                 }
                 catch (Exception ex)
                 {
-                    Log($"FAILED {Path.GetFileName(path)}: {ShortError(ex)}");
+                    Log($"FAILED {Path.GetFileName(path)} while stripping {masterName}: {ShortError(ex)}");
                 }
             }
             MessageBox.Show(this, "Finished. Check the log for results.", "Master Stripper",
@@ -259,6 +259,8 @@ internal sealed class MainForm : Form
             for (var i = mod.MasterReferences.Count - 1; i >= 0; i--)
                 if (mod.MasterReferences[i].Master == target) mod.MasterReferences.RemoveAt(i);
 
+            RebuildOverriddenForms(mod);
+
             mod.BeginWrite
                 .ToPath(stagedPlugin)
                 .WithLoadOrderFromHeaderMasters()
@@ -284,6 +286,17 @@ internal sealed class MainForm : Form
         }
 
         return $"OK {Path.GetFileName(path)} — removed {rawRemoved + structuredRemoved} record(s); wrote {Path.GetFileName(copyMode ? output : path)}";
+    }
+
+    internal static void RebuildOverriddenForms(ISkyrimMod mod)
+    {
+        if (!mod.IsMaster && mod.ModHeader.OverriddenForms is null) return;
+
+        mod.ModHeader.SetOverriddenForms(
+            mod.EnumerateMajorRecords()
+                .Where(record => record.FormKey.ModKey != mod.ModKey)
+                .Select(record => record.FormKey)
+                .Distinct());
     }
 
     private static MissingRecordException? FindMissing(Exception exception)
