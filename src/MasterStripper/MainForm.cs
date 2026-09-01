@@ -22,6 +22,7 @@ internal sealed class MainForm : Form
     private readonly Button _strip = new() { Text = "Strip selected master(s)", Dock = DockStyle.Fill, Enabled = false };
     private readonly Button _add = new() { Text = "Add patches…", Dock = DockStyle.Fill };
     private readonly Button _remove = new() { Text = "Remove selected", Dock = DockStyle.Fill };
+    private readonly Button _flagLight = new() { Text = "Flag selected light", Dock = DockStyle.Fill, Enabled = false };
     private readonly CheckBox _copies = new() { Text = "Write cleaned copies instead of replacing originals", Checked = false, AutoSize = true };
     private readonly TextBox _log = new()
     {
@@ -30,7 +31,7 @@ internal sealed class MainForm : Form
 
     public MainForm(IEnumerable<string> initialFiles)
     {
-        Text = "Master Stripper 2.3.1";
+        Text = "Master Stripper 2.4.0";
         Width = 780;
         Height = 620;
         MinimumSize = new System.Drawing.Size(650, 500);
@@ -41,11 +42,12 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(12),
-            ColumnCount = 2,
+            ColumnCount = 3,
             RowCount = 6
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333f));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333f));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.334f));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
@@ -91,17 +93,18 @@ internal sealed class MainForm : Form
             Padding = new Padding(0, 0, 0, 8)
         };
         layout.Controls.Add(intro, 0, 0);
-        layout.SetColumnSpan(intro, 2);
+        layout.SetColumnSpan(intro, 3);
         layout.Controls.Add(_files, 0, 1);
-        layout.SetColumnSpan(_files, 2);
+        layout.SetColumnSpan(_files, 3);
         layout.Controls.Add(_add, 0, 2);
         layout.Controls.Add(_remove, 1, 2);
+        layout.Controls.Add(_flagLight, 2, 2);
         layout.Controls.Add(new Label { Text = "Master to strip — search by partial filename:", AutoSize = true, Padding = new Padding(0, 8, 0, 2) }, 0, 3);
-        layout.SetColumnSpan(layout.GetControlFromPosition(0, 3)!, 2);
+        layout.SetColumnSpan(layout.GetControlFromPosition(0, 3)!, 3);
         layout.Controls.Add(_masterSearch, 0, 4);
-        layout.SetColumnSpan(_masterSearch, 2);
+        layout.SetColumnSpan(_masterSearch, 3);
         layout.Controls.Add(masterAndLog, 0, 5);
-        layout.SetColumnSpan(masterAndLog, 2);
+        layout.SetColumnSpan(masterAndLog, 3);
         Controls.Add(layout);
 
         DragEnter += (_, e) =>
@@ -115,6 +118,8 @@ internal sealed class MainForm : Form
             foreach (var item in _files.SelectedItems.Cast<string>().ToArray()) _files.Items.Remove(item);
             RefreshMasters();
         };
+        _files.SelectedIndexChanged += (_, _) => UpdateActionButtons();
+        _flagLight.Click += async (_, _) => await FlagSelectedLightAsync();
         _masters.SelectedIndexChanged += (_, _) => UpdateStripButton();
         _masterSearch.TextChanged += (_, _) => ApplyMasterFilter();
         _strip.Click += async (_, _) => await StripAsync();
@@ -226,6 +231,47 @@ internal sealed class MainForm : Form
             }
             MessageBox.Show(this, "Finished. Check the log for results.", "Master Stripper",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private async Task FlagSelectedLightAsync()
+    {
+        var paths = _files.SelectedItems.Cast<string>()
+            .Where(path => Path.GetExtension(path).Equals(".esp", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (paths.Length == 0) return;
+
+        var answer = MessageBox.Show(
+            this,
+            $"Set the ESL/light flag on {paths.Length} selected ESP(s)?\n\n" +
+            "This does not compact FormIDs. Only continue if these plugins are already compacted for ESL. " +
+            "A .backup copy will be created before each changed plugin is replaced.",
+            "Confirm light flag",
+            MessageBoxButtons.OKCancel,
+            MessageBoxIcon.Warning);
+        if (answer != DialogResult.OK) return;
+
+        SetBusy(true);
+        try
+        {
+            foreach (var path in paths)
+            {
+                try
+                {
+                    var changed = await Task.Run(() => PluginHeaderEditor.FlagLight(path));
+                    Log(changed
+                        ? $"OK {Path.GetFileName(path)} — set ESL/light flag"
+                        : $"SKIPPED {Path.GetFileName(path)} — already ESL/light flagged");
+                }
+                catch (Exception ex)
+                {
+                    Log($"FAILED {Path.GetFileName(path)} while setting ESL/light flag: {ShortError(ex)}");
+                }
+            }
         }
         finally
         {
@@ -395,10 +441,16 @@ internal sealed class MainForm : Form
         UseWaitCursor = busy;
         _strip.Enabled = !busy && _masters.SelectedItems.Count > 0 && _files.Items.Count > 0;
         _add.Enabled = _remove.Enabled = _masters.Enabled = _masterSearch.Enabled = _copies.Enabled = !busy;
+        _flagLight.Enabled = !busy && SelectedEspCount() > 0;
     }
 
     private void UpdateStripButton() =>
         _strip.Enabled = _masters.SelectedItems.Count > 0 && _files.Items.Count > 0;
+
+    private void UpdateActionButtons() => _flagLight.Enabled = SelectedEspCount() > 0;
+
+    private int SelectedEspCount() => _files.SelectedItems.Cast<string>()
+        .Count(path => Path.GetExtension(path).Equals(".esp", StringComparison.OrdinalIgnoreCase));
 
     private void Log(string message) =>
         _log.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
