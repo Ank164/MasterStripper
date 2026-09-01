@@ -7,8 +7,12 @@ compatibility patches.
 
 1. Launch `MasterStripper.exe`.
 2. Drag one or more patch `.esp` files into the window.
-3. Search by any part of the filename and choose a master shared by those patches.
-4. Click **Strip selected master**.
+3. Search by any part of the filename and select one or more masters shared by those patches.
+4. Click **Strip selected master(s)**.
+
+The patch and master lists support standard Windows multi-selection: hold Ctrl to
+select individual entries or Shift to select a range. **Remove selected** removes
+all selected patches from the list.
 
 By default, the original plugin is replaced and preserved beside it as a
 `.backup` file. Check **Write cleaned copies instead of replacing originals**

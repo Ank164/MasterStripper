@@ -10,11 +10,16 @@ namespace MasterStripper;
 
 internal sealed class MainForm : Form
 {
-    private readonly ListBox _files = new() { Dock = DockStyle.Fill };
-    private readonly ComboBox _masters = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly ListBox _files = new() { Dock = DockStyle.Fill, SelectionMode = SelectionMode.MultiExtended };
+    private readonly ListBox _masters = new()
+    {
+        Dock = DockStyle.Fill,
+        SelectionMode = SelectionMode.MultiExtended,
+        Font = new Font(Control.DefaultFont.FontFamily, Control.DefaultFont.Size + 2)
+    };
     private readonly TextBox _masterSearch = new() { Dock = DockStyle.Fill, PlaceholderText = "Type any part of the master filename…" };
     private readonly List<string> _availableMasters = [];
-    private readonly Button _strip = new() { Text = "Strip selected master", Dock = DockStyle.Fill, Enabled = false };
+    private readonly Button _strip = new() { Text = "Strip selected master(s)", Dock = DockStyle.Fill, Enabled = false };
     private readonly Button _add = new() { Text = "Add patches…", Dock = DockStyle.Fill };
     private readonly Button _remove = new() { Text = "Remove selected", Dock = DockStyle.Fill };
     private readonly CheckBox _copies = new() { Text = "Write cleaned copies instead of replacing originals", Checked = false, AutoSize = true };
@@ -25,7 +30,7 @@ internal sealed class MainForm : Form
 
     public MainForm(IEnumerable<string> initialFiles)
     {
-        Text = "Master Stripper 2.3.0";
+        Text = "Master Stripper 2.3.1";
         Width = 780;
         Height = 620;
         MinimumSize = new System.Drawing.Size(650, 500);
@@ -37,18 +42,46 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(12),
             ColumnCount = 2,
-            RowCount = 8
+            RowCount = 6
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 44));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 56));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
+
+        var lowerLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 2,
+            Margin = Padding.Empty
+        };
+        lowerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        lowerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        lowerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        lowerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        lowerLayout.Controls.Add(_copies, 0, 0);
+        lowerLayout.Controls.Add(_strip, 1, 0);
+        lowerLayout.Controls.Add(_log, 0, 1);
+        lowerLayout.SetColumnSpan(_log, 2);
+
+        var masterAndLog = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            Size = new System.Drawing.Size(100, 250),
+            SplitterDistance = 105,
+            SplitterWidth = 6,
+            Panel1MinSize = 55,
+            Panel2MinSize = 100,
+            Margin = Padding.Empty
+        };
+        masterAndLog.Panel1.Controls.Add(_masters);
+        masterAndLog.Panel2.Controls.Add(lowerLayout);
 
         var intro = new Label
         {
@@ -67,12 +100,8 @@ internal sealed class MainForm : Form
         layout.SetColumnSpan(layout.GetControlFromPosition(0, 3)!, 2);
         layout.Controls.Add(_masterSearch, 0, 4);
         layout.SetColumnSpan(_masterSearch, 2);
-        layout.Controls.Add(_masters, 0, 5);
-        layout.SetColumnSpan(_masters, 2);
-        layout.Controls.Add(_copies, 0, 6);
-        layout.Controls.Add(_strip, 1, 6);
-        layout.Controls.Add(_log, 0, 7);
-        layout.SetColumnSpan(_log, 2);
+        layout.Controls.Add(masterAndLog, 0, 5);
+        layout.SetColumnSpan(masterAndLog, 2);
         Controls.Add(layout);
 
         DragEnter += (_, e) =>
@@ -86,7 +115,7 @@ internal sealed class MainForm : Form
             foreach (var item in _files.SelectedItems.Cast<string>().ToArray()) _files.Items.Remove(item);
             RefreshMasters();
         };
-        _masters.SelectedIndexChanged += (_, _) => _strip.Enabled = _masters.SelectedItem is not null && _files.Items.Count > 0;
+        _masters.SelectedIndexChanged += (_, _) => UpdateStripButton();
         _masterSearch.TextChanged += (_, _) => ApplyMasterFilter();
         _strip.Click += async (_, _) => await StripAsync();
 
@@ -143,7 +172,7 @@ internal sealed class MainForm : Form
 
     private void ApplyMasterFilter()
     {
-        var previous = _masters.SelectedItem as string;
+        var previous = _masters.SelectedItems.Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
         var query = _masterSearch.Text.Trim();
         _masters.BeginUpdate();
         _masters.Items.Clear();
@@ -154,20 +183,26 @@ internal sealed class MainForm : Form
         }
         _masters.EndUpdate();
 
-        if (previous is not null && _masters.Items.Contains(previous)) _masters.SelectedItem = previous;
-        else if (_masters.Items.Count > 0) _masters.SelectedIndex = 0;
-        _strip.Enabled = _masters.SelectedItem is not null && _files.Items.Count > 0;
+        foreach (var name in previous)
+        {
+            var index = _masters.Items.IndexOf(name);
+            if (index >= 0) _masters.SetSelected(index, true);
+        }
+        UpdateStripButton();
     }
 
     private async Task StripAsync()
     {
-        if (_masters.SelectedItem is not string masterName) return;
+        var masterNames = _masters.SelectedItems.Cast<string>().ToArray();
+        if (masterNames.Length == 0) return;
         var paths = _files.Items.Cast<string>().ToArray();
-        var target = ModKey.FromFileName(masterName);
+        var targets = masterNames.Select(name => ModKey.FromFileName(name)).ToHashSet();
         var copyMode = _copies.Checked;
+        var masterSummary = string.Join(", ", masterNames);
         var answer = MessageBox.Show(
             this,
-            $"Remove every complete record defined by or referencing {masterName} from {paths.Length} patch(es)?\n\n" +
+            $"Remove every complete record defined by or referencing the following {masterNames.Length} master(s) from {paths.Length} patch(es)?\n\n" +
+            $"{string.Join(Environment.NewLine, masterNames)}\n\n" +
             (copyMode ? "Cleaned copies will be created beside the originals." : "Originals will be replaced after .backup copies are created."),
             "Confirm master strip",
             MessageBoxButtons.OKCancel,
@@ -181,12 +216,12 @@ internal sealed class MainForm : Form
             {
                 try
                 {
-                    var result = await Task.Run(() => StripOne(path, target, copyMode));
+                    var result = await Task.Run(() => StripOne(path, targets, copyMode));
                     Log(result);
                 }
                 catch (Exception ex)
                 {
-                    Log($"FAILED {Path.GetFileName(path)} while stripping {masterName}: {ShortError(ex)}");
+                    Log($"FAILED {Path.GetFileName(path)} while stripping {masterSummary}: {ShortError(ex)}");
                 }
             }
             MessageBox.Show(this, "Finished. Check the log for results.", "Master Stripper",
@@ -198,7 +233,7 @@ internal sealed class MainForm : Form
         }
     }
 
-    private static string StripOne(string path, ModKey target, bool copyMode)
+    private static string StripOne(string path, IReadOnlySet<ModKey> targets, bool copyMode)
     {
         var directory = Path.GetDirectoryName(path)!;
         var stem = Path.GetFileNameWithoutExtension(path);
@@ -241,8 +276,8 @@ internal sealed class MainForm : Form
 
             var doomed = mod.EnumerateMajorRecords()
                 .Where(record =>
-                    record.FormKey.ModKey == target ||
-                    record.EnumerateFormLinks().Any(link => link.FormKey.ModKey == target))
+                    targets.Contains(record.FormKey.ModKey) ||
+                    record.EnumerateFormLinks().Any(link => targets.Contains(link.FormKey.ModKey)))
                 .Select(record => (record.FormKey, record.Type))
                 .Distinct()
                 .ToArray();
@@ -252,12 +287,12 @@ internal sealed class MainForm : Form
                 mod.Remove(formKey, type, throwIfUnknown: false);
 
             var remaining = mod.EnumerateMajorRecords()
-                .Any(record => record.FormKey.ModKey == target ||
-                               record.EnumerateFormLinks().Any(link => link.FormKey.ModKey == target));
-            if (remaining) throw new InvalidOperationException("A reference to the selected master remained after removal.");
+                .Any(record => targets.Contains(record.FormKey.ModKey) ||
+                               record.EnumerateFormLinks().Any(link => targets.Contains(link.FormKey.ModKey)));
+            if (remaining) throw new InvalidOperationException("A reference to a selected master remained after removal.");
 
             for (var i = mod.MasterReferences.Count - 1; i >= 0; i--)
-                if (mod.MasterReferences[i].Master == target) mod.MasterReferences.RemoveAt(i);
+                if (targets.Contains(mod.MasterReferences[i].Master)) mod.MasterReferences.RemoveAt(i);
 
             RebuildOverriddenForms(mod);
 
@@ -358,9 +393,12 @@ internal sealed class MainForm : Form
     private void SetBusy(bool busy)
     {
         UseWaitCursor = busy;
-        _strip.Enabled = !busy && _masters.SelectedItem is not null;
+        _strip.Enabled = !busy && _masters.SelectedItems.Count > 0 && _files.Items.Count > 0;
         _add.Enabled = _remove.Enabled = _masters.Enabled = _masterSearch.Enabled = _copies.Enabled = !busy;
     }
+
+    private void UpdateStripButton() =>
+        _strip.Enabled = _masters.SelectedItems.Count > 0 && _files.Items.Count > 0;
 
     private void Log(string message) =>
         _log.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
