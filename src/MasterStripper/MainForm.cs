@@ -31,7 +31,7 @@ internal sealed class MainForm : Form
 
     public MainForm(IEnumerable<string> initialFiles)
     {
-        Text = "Master Stripper 2.4.0";
+        Text = "Master Stripper 2.4.1";
         Width = 780;
         Height = 620;
         MinimumSize = new System.Drawing.Size(650, 500);
@@ -256,6 +256,9 @@ internal sealed class MainForm : Form
         if (answer != DialogResult.OK) return;
 
         SetBusy(true);
+        var changedCount = 0;
+        var skippedCount = 0;
+        var failedCount = 0;
         try
         {
             foreach (var path in paths)
@@ -263,15 +266,28 @@ internal sealed class MainForm : Form
                 try
                 {
                     var changed = await Task.Run(() => PluginHeaderEditor.FlagLight(path));
+                    if (changed) changedCount++;
+                    else skippedCount++;
                     Log(changed
                         ? $"OK {Path.GetFileName(path)} — set ESL/light flag"
                         : $"SKIPPED {Path.GetFileName(path)} — already ESL/light flagged");
                 }
                 catch (Exception ex)
                 {
+                    failedCount++;
                     Log($"FAILED {Path.GetFileName(path)} while setting ESL/light flag: {ShortError(ex)}");
                 }
             }
+
+            MessageBox.Show(
+                this,
+                $"Verified ESL/light flag on {changedCount} plugin(s).\n" +
+                $"Already flagged: {skippedCount}. Failed: {failedCount}.\n\n" +
+                "Press F5 in MO2 to refresh its Plugins pane. If MO2 still does not show ESL, " +
+                "check whether another mod supplies the winning copy of the same plugin filename.",
+                "Light flag results",
+                MessageBoxButtons.OK,
+                failedCount == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         }
         finally
         {

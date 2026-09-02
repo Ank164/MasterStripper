@@ -1,5 +1,8 @@
 using System.Buffers.Binary;
 using MasterStripper;
+using Mutagen.Bethesda;
+using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Skyrim;
 using Xunit;
 
 namespace MasterStripper.Tests;
@@ -14,13 +17,14 @@ public sealed class PluginHeaderEditorTests : IDisposable
     public void SetsOnlyLightFlagAndBacksUpOriginal()
     {
         var path = Path.Combine(_folder, "AlreadyCompacted.esp");
-        var original = HeaderWithFlags(0x0000_0001);
-        File.WriteAllBytes(path, original);
+        WritePlugin(path, isLight: false);
+        var original = File.ReadAllBytes(path);
 
         Assert.True(PluginHeaderEditor.FlagLight(path));
 
         var changed = File.ReadAllBytes(path);
-        Assert.Equal(0x0000_0201u, BinaryPrimitives.ReadUInt32LittleEndian(changed.AsSpan(8, 4)));
+        var originalFlags = BinaryPrimitives.ReadUInt32LittleEndian(original.AsSpan(8, 4));
+        Assert.Equal(originalFlags | 0x0000_0200u, BinaryPrimitives.ReadUInt32LittleEndian(changed.AsSpan(8, 4)));
         Assert.Equal(original, File.ReadAllBytes(path + ".backup"));
     }
 
@@ -28,18 +32,19 @@ public sealed class PluginHeaderEditorTests : IDisposable
     public void SkipsPluginThatIsAlreadyLightFlagged()
     {
         var path = Path.Combine(_folder, "AlreadyLight.esp");
-        File.WriteAllBytes(path, HeaderWithFlags(0x0000_0200));
+        WritePlugin(path, isLight: true);
 
         Assert.False(PluginHeaderEditor.FlagLight(path));
         Assert.False(File.Exists(path + ".backup"));
     }
 
-    private static byte[] HeaderWithFlags(uint flags)
+    private static void WritePlugin(string path, bool isLight)
     {
-        var bytes = new byte[16];
-        "TES4"u8.CopyTo(bytes);
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(8, 4), flags);
-        return bytes;
+        var mod = new SkyrimMod(ModKey.FromFileName(Path.GetFileName(path)), SkyrimRelease.SkyrimSE)
+        {
+            IsSmallMaster = isLight
+        };
+        mod.BeginWrite.ToPath(path).WithNoLoadOrder().Write();
     }
 
     public void Dispose()

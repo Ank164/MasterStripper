@@ -1,4 +1,7 @@
 using System.Buffers.Binary;
+using Mutagen.Bethesda;
+using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Skyrim;
 
 namespace MasterStripper;
 
@@ -22,7 +25,7 @@ internal static class PluginHeaderEditor
         if ((flags & LightFlag) != 0) return false;
 
         var directory = Path.GetDirectoryName(path)!;
-        var staged = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        var staged = Path.Combine(directory, $".{Path.GetFileNameWithoutExtension(path)}.{Guid.NewGuid():N}.esp");
         var backup = UniquePath(path + ".backup");
         try
         {
@@ -33,6 +36,16 @@ internal static class PluginHeaderEditor
                 output.Position = 8;
                 output.Write(header, 8, 4);
                 output.Flush(flushToDisk: true);
+            }
+
+            using (var verified = SkyrimMod.Create(SkyrimRelease.SkyrimSE)
+                       .FromPath(staged)
+                       .WithLoadOrder(Array.Empty<ModKey>())
+                       .WithDataFolder(directory)
+                       .Construct())
+            {
+                if (!verified.IsSmallMaster)
+                    throw new InvalidDataException("The saved plugin did not reopen with the ESL/light flag set.");
             }
 
             File.Move(path, backup);
