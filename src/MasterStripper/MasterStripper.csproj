@@ -9,6 +9,7 @@
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AssemblyName>MasterStripper</AssemblyName>
+    <ApplicationIcon>stripper.ico</ApplicationIcon>
     <Version>2.4.1</Version>
   </PropertyGroup>
   <ItemGroup>
