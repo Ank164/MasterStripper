@@ -23,6 +23,7 @@ internal sealed class MainForm : Form
     private readonly Button _add = new() { Text = "Add patches…", Dock = DockStyle.Fill };
     private readonly Button _remove = new() { Text = "Remove selected", Dock = DockStyle.Fill };
     private readonly Button _flagLight = new() { Text = "Flag selected light", Dock = DockStyle.Fill, Enabled = false };
+    private readonly Button _flagMaster = new() { Text = "Flag selected master", Dock = DockStyle.Fill, Enabled = false };
     private readonly CheckBox _copies = new() { Text = "Write cleaned copies instead of replacing originals", Checked = false, AutoSize = true };
     private readonly TextBox _log = new()
     {
@@ -31,7 +32,7 @@ internal sealed class MainForm : Form
 
     public MainForm(IEnumerable<string> initialFiles)
     {
-        Text = "Master Stripper 2.4.1";
+        Text = "Master Stripper 2.5.0";
         Width = 780;
         Height = 620;
         MinimumSize = new System.Drawing.Size(650, 500);
@@ -42,12 +43,13 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(12),
-            ColumnCount = 3,
+            ColumnCount = 4,
             RowCount = 6
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333f));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333f));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.334f));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
@@ -93,18 +95,19 @@ internal sealed class MainForm : Form
             Padding = new Padding(0, 0, 0, 8)
         };
         layout.Controls.Add(intro, 0, 0);
-        layout.SetColumnSpan(intro, 3);
+        layout.SetColumnSpan(intro, 4);
         layout.Controls.Add(_files, 0, 1);
-        layout.SetColumnSpan(_files, 3);
+        layout.SetColumnSpan(_files, 4);
         layout.Controls.Add(_add, 0, 2);
         layout.Controls.Add(_remove, 1, 2);
         layout.Controls.Add(_flagLight, 2, 2);
+        layout.Controls.Add(_flagMaster, 3, 2);
         layout.Controls.Add(new Label { Text = "Master to strip — search by partial filename:", AutoSize = true, Padding = new Padding(0, 8, 0, 2) }, 0, 3);
-        layout.SetColumnSpan(layout.GetControlFromPosition(0, 3)!, 3);
+        layout.SetColumnSpan(layout.GetControlFromPosition(0, 3)!, 4);
         layout.Controls.Add(_masterSearch, 0, 4);
-        layout.SetColumnSpan(_masterSearch, 3);
+        layout.SetColumnSpan(_masterSearch, 4);
         layout.Controls.Add(masterAndLog, 0, 5);
-        layout.SetColumnSpan(masterAndLog, 3);
+        layout.SetColumnSpan(masterAndLog, 4);
         Controls.Add(layout);
 
         DragEnter += (_, e) =>
@@ -120,6 +123,7 @@ internal sealed class MainForm : Form
         };
         _files.SelectedIndexChanged += (_, _) => UpdateActionButtons();
         _flagLight.Click += async (_, _) => await FlagSelectedLightAsync();
+        _flagMaster.Click += async (_, _) => await FlagSelectedMasterAsync();
         _masters.SelectedIndexChanged += (_, _) => UpdateStripButton();
         _masterSearch.TextChanged += (_, _) => ApplyMasterFilter();
         _strip.Click += async (_, _) => await StripAsync();
@@ -295,6 +299,62 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task FlagSelectedMasterAsync()
+    {
+        var paths = _files.SelectedItems.Cast<string>()
+            .Where(path => Path.GetExtension(path).Equals(".esp", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (paths.Length == 0) return;
+
+        var answer = MessageBox.Show(
+            this,
+            $"Set the ESM/master flag on {paths.Length} selected ESP(s)?\n\n" +
+            "This changes only the plugin header flag; filenames remain .esp. " +
+            "A .backup copy will be created before each changed plugin is replaced.",
+            "Confirm master flag",
+            MessageBoxButtons.OKCancel,
+            MessageBoxIcon.Warning);
+        if (answer != DialogResult.OK) return;
+
+        SetBusy(true);
+        var changedCount = 0;
+        var skippedCount = 0;
+        var failedCount = 0;
+        try
+        {
+            foreach (var path in paths)
+            {
+                try
+                {
+                    var changed = await Task.Run(() => PluginHeaderEditor.FlagMaster(path));
+                    if (changed) changedCount++;
+                    else skippedCount++;
+                    Log(changed
+                        ? $"OK {Path.GetFileName(path)} — set ESM/master flag"
+                        : $"SKIPPED {Path.GetFileName(path)} — already ESM/master flagged");
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    Log($"FAILED {Path.GetFileName(path)} while setting ESM/master flag: {ShortError(ex)}");
+                }
+            }
+
+            MessageBox.Show(
+                this,
+                $"Verified ESM/master flag on {changedCount} plugin(s).\n" +
+                $"Already flagged: {skippedCount}. Failed: {failedCount}.\n\n" +
+                "Press F5 in MO2 to refresh its Plugins pane.",
+                "Master flag results",
+                MessageBoxButtons.OK,
+                failedCount == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
     private static string StripOne(string path, IReadOnlySet<ModKey> targets, bool copyMode)
     {
         var directory = Path.GetDirectoryName(path)!;
@@ -457,13 +517,13 @@ internal sealed class MainForm : Form
         UseWaitCursor = busy;
         _strip.Enabled = !busy && _masters.SelectedItems.Count > 0 && _files.Items.Count > 0;
         _add.Enabled = _remove.Enabled = _masters.Enabled = _masterSearch.Enabled = _copies.Enabled = !busy;
-        _flagLight.Enabled = !busy && SelectedEspCount() > 0;
+        _flagLight.Enabled = _flagMaster.Enabled = !busy && SelectedEspCount() > 0;
     }
 
     private void UpdateStripButton() =>
         _strip.Enabled = _masters.SelectedItems.Count > 0 && _files.Items.Count > 0;
 
-    private void UpdateActionButtons() => _flagLight.Enabled = SelectedEspCount() > 0;
+    private void UpdateActionButtons() => _flagLight.Enabled = _flagMaster.Enabled = SelectedEspCount() > 0;
 
     private int SelectedEspCount() => _files.SelectedItems.Cast<string>()
         .Count(path => Path.GetExtension(path).Equals(".esp", StringComparison.OrdinalIgnoreCase));

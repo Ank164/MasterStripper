@@ -1,6 +1,7 @@
 bin/
 obj/
 Release/
+.verify-publish/
 *.user
 *.suo
 *.zip

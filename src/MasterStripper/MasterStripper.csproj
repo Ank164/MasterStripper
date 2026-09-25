@@ -10,7 +10,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <AssemblyName>MasterStripper</AssemblyName>
     <ApplicationIcon>stripper.ico</ApplicationIcon>
-    <Version>2.4.1</Version>
+    <Version>2.5.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Mutagen.Bethesda.Skyrim" Version="0.53.1" />

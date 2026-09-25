@@ -19,6 +19,11 @@ light** to set their ESL flag. This action does not compact FormIDs. It creates 
 `.backup` copy before replacing each changed plugin and skips files that are
 already light flagged.
 
+Select one or more `.esp` files and click **Flag selected master** to set their
+ESM/master flag without renaming them. This action also creates a `.backup` copy
+before replacing each changed plugin and skips files that are already master
+flagged.
+
 By default, the original plugin is replaced and preserved beside it as a
 `.backup` file. Check **Write cleaned copies instead of replacing originals**
 if you want a separate `.stripped.esp` output.

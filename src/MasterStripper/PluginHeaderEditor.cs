@@ -7,12 +7,19 @@ namespace MasterStripper;
 
 internal static class PluginHeaderEditor
 {
+    private const uint MasterFlag = 0x0000_0001;
     private const uint LightFlag = 0x0000_0200;
 
-    internal static bool FlagLight(string path)
+    internal static bool FlagLight(string path) =>
+        SetFlag(path, LightFlag, mod => mod.IsSmallMaster, "ESL/light");
+
+    internal static bool FlagMaster(string path) =>
+        SetFlag(path, MasterFlag, mod => mod.IsMaster, "ESM/master");
+
+    private static bool SetFlag(string path, uint flag, Func<ISkyrimModGetter, bool> verify, string description)
     {
         if (!Path.GetExtension(path).Equals(".esp", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Only .esp plugins can be flagged light by this action.");
+            throw new InvalidOperationException($"Only .esp plugins can be flagged {description} by this action.");
 
         var header = new byte[12];
         using (var input = File.OpenRead(path))
@@ -22,7 +29,7 @@ internal static class PluginHeaderEditor
         }
 
         var flags = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(8, 4));
-        if ((flags & LightFlag) != 0) return false;
+        if ((flags & flag) != 0) return false;
 
         var directory = Path.GetDirectoryName(path)!;
         var staged = Path.Combine(directory, $".{Path.GetFileNameWithoutExtension(path)}.{Guid.NewGuid():N}.esp");
@@ -32,7 +39,7 @@ internal static class PluginHeaderEditor
             File.Copy(path, staged);
             using (var output = new FileStream(staged, FileMode.Open, FileAccess.Write, FileShare.None))
             {
-                BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(8, 4), flags | LightFlag);
+                BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(8, 4), flags | flag);
                 output.Position = 8;
                 output.Write(header, 8, 4);
                 output.Flush(flushToDisk: true);
@@ -44,8 +51,8 @@ internal static class PluginHeaderEditor
                        .WithDataFolder(directory)
                        .Construct())
             {
-                if (!verified.IsSmallMaster)
-                    throw new InvalidDataException("The saved plugin did not reopen with the ESL/light flag set.");
+                if (!verify(verified))
+                    throw new InvalidDataException($"The saved plugin did not reopen with the {description} flag set.");
             }
 
             File.Move(path, backup);

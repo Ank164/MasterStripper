@@ -38,11 +38,37 @@ public sealed class PluginHeaderEditorTests : IDisposable
         Assert.False(File.Exists(path + ".backup"));
     }
 
-    private static void WritePlugin(string path, bool isLight)
+    [Fact]
+    public void SetsOnlyMasterFlagAndBacksUpOriginal()
+    {
+        var path = Path.Combine(_folder, "OrdinaryPatch.esp");
+        WritePlugin(path, isLight: false, isMaster: false);
+        var original = File.ReadAllBytes(path);
+
+        Assert.True(PluginHeaderEditor.FlagMaster(path));
+
+        var changed = File.ReadAllBytes(path);
+        var originalFlags = BinaryPrimitives.ReadUInt32LittleEndian(original.AsSpan(8, 4));
+        Assert.Equal(originalFlags | 0x0000_0001u, BinaryPrimitives.ReadUInt32LittleEndian(changed.AsSpan(8, 4)));
+        Assert.Equal(original, File.ReadAllBytes(path + ".backup"));
+    }
+
+    [Fact]
+    public void SkipsPluginThatIsAlreadyMasterFlagged()
+    {
+        var path = Path.Combine(_folder, "AlreadyMaster.esp");
+        WritePlugin(path, isLight: false, isMaster: true);
+
+        Assert.False(PluginHeaderEditor.FlagMaster(path));
+        Assert.False(File.Exists(path + ".backup"));
+    }
+
+    private static void WritePlugin(string path, bool isLight, bool isMaster = false)
     {
         var mod = new SkyrimMod(ModKey.FromFileName(Path.GetFileName(path)), SkyrimRelease.SkyrimSE)
         {
-            IsSmallMaster = isLight
+            IsSmallMaster = isLight,
+            IsMaster = isMaster
         };
         mod.BeginWrite.ToPath(path).WithNoLoadOrder().Write();
     }
