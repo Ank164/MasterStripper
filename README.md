@@ -3,6 +3,9 @@
 A small Windows utility for removing one master dependency from ordinary Skyrim
 compatibility patches.
 
+The interface starts in dark mode. Use **Dark mode** in the top-right corner to
+switch to the light theme; your choice is saved for the next launch.
+
 ## Use
 
 1. Launch `MasterStripper.exe`.
@@ -14,12 +17,11 @@ The patch and master lists support standard Windows multi-selection: hold Ctrl t
 select individual entries or Shift to select a range. **Remove selected** removes
 all selected patches from the list.
 
-Select one or more already-compacted `.esp` files and click **Flag selected
-light** to set their ESL flag. This action does not compact FormIDs. It creates a
+Select one or more already-compacted `.esp` files and click **Flag as ESL** to set their ESL flag. This action does not compact FormIDs. It creates a
 `.backup` copy before replacing each changed plugin and skips files that are
 already light flagged.
 
-Select one or more `.esp` files and click **Flag selected master** to set their
+Select one or more `.esp` files and click **Flag as ESM** to set their
 ESM/master flag without renaming them. This action also creates a `.backup` copy
 before replacing each changed plugin and skips files that are already master
 flagged.

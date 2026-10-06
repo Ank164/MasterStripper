@@ -19,30 +19,34 @@ internal sealed class MainForm : Form
     };
     private readonly TextBox _masterSearch = new() { Dock = DockStyle.Fill, PlaceholderText = "Type any part of the master filename…" };
     private readonly List<string> _availableMasters = [];
-    private readonly Button _strip = new() { Text = "Strip selected master(s)", Dock = DockStyle.Fill, Enabled = false };
-    private readonly Button _add = new() { Text = "Add patches…", Dock = DockStyle.Fill };
-    private readonly Button _remove = new() { Text = "Remove selected", Dock = DockStyle.Fill };
-    private readonly Button _flagLight = new() { Text = "Flag selected light", Dock = DockStyle.Fill, Enabled = false };
-    private readonly Button _flagMaster = new() { Text = "Flag selected master", Dock = DockStyle.Fill, Enabled = false };
+    private readonly ThemeButton _strip = new() { Text = "Strip selected master(s)", Dock = DockStyle.Fill, Enabled = false };
+    private readonly ThemeButton _add = new() { Text = "Add patches…", Dock = DockStyle.Fill };
+    private readonly ThemeButton _remove = new() { Text = "Remove selected", Dock = DockStyle.Fill };
+    private readonly ThemeButton _flagLight = new() { Text = "Flag as ESL", Dock = DockStyle.Fill, Enabled = false };
+    private readonly ThemeButton _flagMaster = new() { Text = "Flag as ESM", Dock = DockStyle.Fill, Enabled = false };
     private readonly CheckBox _copies = new() { Text = "Write cleaned copies instead of replacing originals", Checked = false, AutoSize = true };
     private readonly TextBox _log = new()
     {
         Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical
     };
 
+    private readonly CheckBox _darkMode = new() { Text = "Dark mode", AutoSize = true, Anchor = AnchorStyles.Right };
+
     public MainForm(IEnumerable<string> initialFiles)
     {
-        Text = "Master Stripper 2.5.0";
-        Width = 780;
-        Height = 620;
-        MinimumSize = new System.Drawing.Size(650, 500);
+        Text = "Master Stripper 2.6.0";
+        Font = new Font("Segoe UI", 10F);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Width = 840;
+        Height = 660;
+        MinimumSize = new System.Drawing.Size(840, 620);
         StartPosition = FormStartPosition.CenterScreen;
         AllowDrop = true;
 
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(12),
+            Padding = new Padding(18),
             ColumnCount = 4,
             RowCount = 6
         };
@@ -51,26 +55,29 @@ internal sealed class MainForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 35));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 65));
 
         var lowerLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 2,
+            RowCount = 3,
             Margin = Padding.Empty
         };
         lowerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         lowerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        lowerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        lowerLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        lowerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         lowerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         lowerLayout.Controls.Add(_copies, 0, 0);
-        lowerLayout.Controls.Add(_strip, 1, 0);
-        lowerLayout.Controls.Add(_log, 0, 1);
+        lowerLayout.SetColumnSpan(_copies, 2);
+        lowerLayout.Controls.Add(new Label { Text = "Activity", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        lowerLayout.Controls.Add(_strip, 1, 1);
+        lowerLayout.Controls.Add(_log, 0, 2);
         lowerLayout.SetColumnSpan(_log, 2);
 
         var masterAndLog = new SplitContainer
@@ -81,7 +88,7 @@ internal sealed class MainForm : Form
             SplitterDistance = 105,
             SplitterWidth = 6,
             Panel1MinSize = 55,
-            Panel2MinSize = 100,
+            Panel2MinSize = 165,
             Margin = Padding.Empty
         };
         masterAndLog.Panel1.Controls.Add(_masters);
@@ -89,13 +96,14 @@ internal sealed class MainForm : Form
 
         var intro = new Label
         {
-            Text = "Drop Skyrim patch plugins here, then choose the master to remove.",
+            Text = "MASTER STRIPPER",
             AutoSize = true,
-            Font = new Font(Font, FontStyle.Bold),
+            Font = new Font("Segoe UI", 13F, FontStyle.Bold),
             Padding = new Padding(0, 0, 0, 8)
         };
         layout.Controls.Add(intro, 0, 0);
-        layout.SetColumnSpan(intro, 4);
+        layout.SetColumnSpan(intro, 3);
+        layout.Controls.Add(_darkMode, 3, 0);
         layout.Controls.Add(_files, 0, 1);
         layout.SetColumnSpan(_files, 4);
         layout.Controls.Add(_add, 0, 2);
@@ -127,6 +135,18 @@ internal sealed class MainForm : Form
         _masters.SelectedIndexChanged += (_, _) => UpdateStripButton();
         _masterSearch.TextChanged += (_, _) => ApplyMasterFilter();
         _strip.Click += async (_, _) => await StripAsync();
+
+        _files.HorizontalScrollbar = _masters.HorizontalScrollbar = true;
+        _files.IntegralHeight = _masters.IntegralHeight = false;
+        _masters.Font = Font;
+        _log.Font = new Font("Consolas", 9F);
+        _darkMode.Checked = UiTheme.LoadDarkMode();
+        UiTheme.Apply(this, _darkMode.Checked, _strip);
+        _darkMode.CheckedChanged += (_, _) =>
+        {
+            UiTheme.Apply(this, _darkMode.Checked, _strip);
+            UiTheme.SaveDarkMode(_darkMode.Checked);
+        };
 
         AddFiles(initialFiles);
         Log("Ready. Originals are backed up before replacement.");
